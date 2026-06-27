@@ -29,6 +29,13 @@ from tools.pomodoro    import start_pomodoro, stop_pomodoro, pomodoro_status
 from tools.finance     import get_crypto_price, get_stock_price, market_summary
 from tools.fake_call   import schedule_fake_call, cancel_fake_call
 from tools.spaced_repetition import mark_struggle, mark_understood, get_due_reviews, list_all_cards
+from tools.hype         import generate_hype, exam_hype, presentation_hype, coding_hype
+from tools.procrastination import detect as detect_procrastination, call_out as procrastination_callout, stats as procrastination_stats
+from tools.dream        import log_and_interpret as interpret_dream, read_dreams, dream_patterns
+from tools.vault        import add_to_vault, open_vault, vault_status, clear_vault
+from tools.shadow       import shadow_report, topic_map, activity_streak, word_cloud
+from tools.wingman      import craft_reply, comeback, icebreaker
+from tools.battle       import battle_report, personal_best, streak_battle
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
@@ -333,6 +340,75 @@ def detect_and_run(text: str):
     if any(k in t for k in ["good night", "goodnight", "i'm going to sleep",
                               "im going to sleep", "going to bed", "sleep mode"]):
         return None, False, "GOOD_NIGHT"
+
+    # ── Hype Engine ───────────────────────────────────────────────────────────
+    if any(k in t for k in ["hype me", "hype me up", "motivate me", "pump me up",
+                              "pre-game speech", "fire me up", "i need motivation",
+                              "get me hyped", "give me energy"]):
+        if any(k in t for k in ["exam", "test", "paper"]):
+            return exam_hype(), False, None
+        if any(k in t for k in ["present", "speech", "speak", "talk in front"]):
+            return presentation_hype(), False, None
+        if any(k in t for k in ["code", "coding", "study", "dsa", "c++"]):
+            return coding_hype(), False, None
+        ctx = re.sub(r"hype me(?: up)?|motivate me|pump me up|pre-game speech|fire me up|give me energy", "", t).strip()
+        return generate_hype(ctx), False, None
+
+    # ── Procrastination Detector (also fires passively) ───────────────────────
+    if any(k in t for k in ["procrastination stats", "how much am i procrastinating",
+                              "procrastination count"]):
+        return procrastination_stats(), True, None
+
+    # ── Dream Journal ─────────────────────────────────────────────────────────
+    if any(k in t for k in ["i had a dream", "interpret my dream", "dream about",
+                              "i dreamed", "i dreamt", "log dream", "dream:"]):
+        return interpret_dream(text), False, None
+    if any(k in t for k in ["read my dreams", "my dream journal", "dream journal"]):
+        return read_dreams(), False, None
+    if any(k in t for k in ["dream patterns", "recurring dreams", "what do i dream about"]):
+        return dream_patterns(), False, None
+
+    # ── Secret Vault ──────────────────────────────────────────────────────────
+    if any(k in t for k in ["add to vault", "vault add", "store secret", "lock this"]):
+        return add_to_vault(text), True, None
+    if any(k in t for k in ["open vault", "read vault", "show vault", "unlock vault"]):
+        return open_vault(text), True, None
+    if "vault status" in t or "how many secrets" in t:
+        return vault_status(), True, None
+    if any(k in t for k in ["clear vault", "wipe vault", "delete vault"]):
+        return clear_vault(text), True, None
+
+    # ── Shadow Stats ──────────────────────────────────────────────────────────
+    if any(k in t for k in ["shadow report", "shadow analysis", "life stats", "weekly stats",
+                              "my stats", "analyze my life", "life analytics"]):
+        return shadow_report(), False, None
+    if any(k in t for k in ["what do i talk about", "topic map", "my topics", "what topics"]):
+        return topic_map(), False, None
+    if any(k in t for k in ["activity streak", "daily streak", "active days", "how often"]):
+        return activity_streak(), True, None
+    if any(k in t for k in ["word cloud", "my words", "psychoanalyze me", "analyze my words"]):
+        return word_cloud(), False, None
+
+    # ── Wingman ───────────────────────────────────────────────────────────────
+    if any(k in t for k in ["wingman", "help me reply", "help me text", "draft a message",
+                              "how do i tell", "what do i say to", "perfect reply to",
+                              "perfect message", "how should i respond"]):
+        if any(k in t for k in ["comeback", "savage reply", "witty reply"]):
+            msg = re.sub(r".*(?:comeback|savage reply|witty reply)[:\s]+", "", t).strip()
+            return comeback(msg or text), False, None
+        if any(k in t for k in ["icebreaker", "opening message", "first message"]):
+            ctx = re.sub(r".*(?:icebreaker|opening message|first message)[:\s]+", "", t).strip()
+            return icebreaker(ctx or text), False, None
+        return craft_reply(text), False, None
+
+    # ── Battle Mode ───────────────────────────────────────────────────────────
+    if any(k in t for k in ["battle mode", "battle report", "vs yesterday", "beat my record",
+                              "how am i doing today", "productivity score", "my score today"]):
+        return battle_report(), False, None
+    if any(k in t for k in ["personal best", "my best day", "all time high", "leaderboard"]):
+        return personal_best(), False, None
+    if "winning streak" in t or "streak battle" in t:
+        return streak_battle(), True, None
 
     # ── Web search ────────────────────────────────────────────────────────────
     SEARCH_KW = ["search", "look up", "google", "find out", "who is", "who won",
