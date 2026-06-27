@@ -1,5 +1,5 @@
-# Core
-anthropic>=0.30.0
+# Core — Groq is FREE (get key at console.groq.com)
+groq>=0.9.0
 python-dotenv>=1.0.0
 
 # ElevenLabs TTS (optional — only needed if TTS_BACKEND=elevenlabs)
