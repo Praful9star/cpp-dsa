@@ -14,6 +14,7 @@ import stt
 import tts
 import brain
 import memory
+from tools.procrastination import detect as _is_procrastinating, call_out as _procrastination_callout
 
 config.validate_phase1()
 memory.init_db()
@@ -242,6 +243,15 @@ def run():
                 tts.speak(reply)
                 sleeping = True
                 notify("Buddy", "Sleep mode — say 'hey buddy' to wake me")
+                continue
+
+            # Procrastination detector — fires passively on lazy language
+            if _is_procrastinating(text):
+                callout = _procrastination_callout(text)
+                print(f"\n[Buddy] {callout}")
+                tts.speak(callout)
+                memory.save_turn("assistant", callout)
+                conversation.append({"role": "assistant", "content": callout})
                 continue
 
             # Emotion detection — adjust response if frustrated
