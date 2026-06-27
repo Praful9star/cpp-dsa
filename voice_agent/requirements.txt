@@ -1,13 +1,13 @@
-# Core — uses plain requests so no Rust/build issues on Android
+# Core
 requests>=2.31.0
 python-dotenv>=1.0.0
 
-# ElevenLabs TTS (optional — only needed if TTS_BACKEND=elevenlabs)
+# Phase 3 tools
+duckduckgo-search>=6.0.0   # free web search, no API key needed
+yt-dlp>=2024.1.0            # YouTube audio/video streaming
+
+# Optional: ElevenLabs TTS (only if TTS_BACKEND=elevenlabs)
 # elevenlabs>=1.0.0
 
-# Phase 2 additions (uncomment when ready)
-# (sqlite3 is in the Python standard library — no extra package needed)
-
-# Phase 3 additions (uncomment when ready)
-# python-telegram-bot>=21.0
-# yt-dlp>=2024.1.0
+# Phase 3 optional: Telegram (only needed if you set TELEGRAM_BOT_TOKEN)
+# python-telegram-bot>=21.0  # not needed — we use raw requests for Telegram
