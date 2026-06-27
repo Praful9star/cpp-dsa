@@ -1,21 +1,13 @@
 """
-agent.py — Phase 4: Wake word, sound cues, robust error handling.
-
-Wake word: say "hey buddy" → agent wakes and listens for your command.
-Sleep:     say "go to sleep" → goes back to idle (wake word only mode).
-Quit:      Ctrl+C
-
-Flow when AWAKE:
-  beep → listen → think → speak → beep → listen → ...
-
-Flow when SLEEPING (idle):
-  silently listen for wake word only → wake up on "hey buddy"
+agent.py — Full Jarvis agent with proactive monitoring and streak tracking.
 """
 
 import subprocess
 import sys
 import time
-import os
+import datetime
+import sqlite3
+import threading
 
 import config
 import stt
@@ -24,7 +16,6 @@ import brain
 import memory
 
 config.validate_phase1()
-
 memory.init_db()
 
 PRAFUL_FACTS = [
@@ -38,79 +29,126 @@ PRAFUL_FACTS = [
 memory.seed_facts(PRAFUL_FACTS)
 
 
-# ── Audio cues ────────────────────────────────────────────────────────────────
-# Short beep files stored in ~/sounds/. We generate them once using termux-tts
-# as a workaround — or just use a tiny subprocess bell.
+# ── Streak tracking ───────────────────────────────────────────────────────────
 
-def beep_done():
-    """Terminal bell after agent finishes speaking."""
-    print("\a", end="", flush=True)
+def update_streak() -> int:
+    """Increment daily streak and return current count."""
+    try:
+        conn = sqlite3.connect(config.DB_PATH)
+        conn.execute("""CREATE TABLE IF NOT EXISTS streak (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            last_date TEXT, count INTEGER DEFAULT 0
+        )""")
+        row = conn.execute("SELECT last_date, count FROM streak WHERE id=1").fetchone()
+        today = str(datetime.date.today())
+
+        if not row:
+            conn.execute("INSERT INTO streak VALUES (1, ?, 1)", (today,))
+            count = 1
+        elif row[0] == today:
+            count = row[1]
+        elif row[0] == str(datetime.date.today() - datetime.timedelta(days=1)):
+            count = row[1] + 1
+            conn.execute("UPDATE streak SET last_date=?, count=? WHERE id=1", (today, count))
+        else:
+            count = 1
+            conn.execute("UPDATE streak SET last_date=?, count=1 WHERE id=1", (today,))
+
+        conn.commit()
+        conn.close()
+        return count
+    except Exception:
+        return 0
+
+
+# ── Proactive battery warning (background thread) ─────────────────────────────
+
+_battery_warned = False
+
+def _battery_monitor():
+    global _battery_warned
+    while True:
+        time.sleep(120)  # check every 2 minutes
+        try:
+            import json
+            result = subprocess.run(
+                ["termux-battery-status"], capture_output=True, text=True, timeout=5
+            )
+            data = json.loads(result.stdout)
+            pct  = data.get("percentage", 100)
+            plugged = data.get("plugged", "").lower()
+
+            if pct <= 20 and "ac" not in plugged and "usb" not in plugged and not _battery_warned:
+                _battery_warned = True
+                tts.speak(f"Hey Praful, heads up — battery is at {pct} percent. Plug in soon.")
+            elif pct > 25:
+                _battery_warned = False
+        except Exception:
+            pass
+
+
+# ── Emotion detection ─────────────────────────────────────────────────────────
+
+FRUSTRATION_WORDS = {"ugh", "damn", "shit", "stupid", "idiot", "hate", "annoying",
+                      "frustrating", "useless", "terrible", "worst", "broke", "crash"}
+HAPPY_WORDS       = {"awesome", "great", "nice", "love", "perfect", "amazing",
+                      "excellent", "wonderful", "yes", "yay", "cool", "solid"}
+
+def detect_emotion(text: str) -> str:
+    words = set(text.lower().split())
+    if words & FRUSTRATION_WORDS:
+        return "frustrated"
+    if words & HAPPY_WORDS:
+        return "happy"
+    return "neutral"
+
+
+# ── Auto night silence ────────────────────────────────────────────────────────
+
+def is_night_time() -> bool:
+    """Between midnight and 6 AM — go fully silent."""
+    hour = datetime.datetime.now().hour
+    return 0 <= hour < 6
 
 
 # ── Termux helpers ────────────────────────────────────────────────────────────
 
 def acquire_wake_lock():
     try:
-        subprocess.Popen(["termux-wake-lock"],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen(["termux-wake-lock"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except FileNotFoundError:
         pass
-
 
 def release_wake_lock():
     try:
-        subprocess.run(["termux-wake-unlock"],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["termux-wake-unlock"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except FileNotFoundError:
         pass
-
 
 def notify(title: str, body: str):
     try:
         subprocess.Popen(
-            ["termux-notification", "--title", title,
-             "--content", body, "--id", "1", "--priority", "low"],
+            ["termux-notification", "--title", title, "--content", body, "--id", "1", "--priority", "low"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
     except FileNotFoundError:
         pass
 
-
 def print_status(state: str):
-    icons = {
-        "idle":     "💤 IDLE     ",
-        "listening": "🎙  LISTENING",
-        "thinking":  "🧠 THINKING ",
-        "speaking":  "🔊 SPEAKING ",
-    }
-    print(f"\r[{icons.get(state, state.upper())}]  ", end="", flush=True)
+    icons = {"idle": "💤 IDLE", "listening": "🎙  LISTENING",
+             "thinking": "🧠 THINKING", "speaking": "🔊 SPEAKING"}
+    print(f"\r[{icons.get(state, state.upper())}]   ", end="", flush=True)
 
-
-# ── STT with garbage filtering ────────────────────────────────────────────────
-# Sometimes STT returns noise or very short garbage strings.
-
-GARBAGE = {"", "you", "the", "a", "um", "uh", "hmm", "hm", "ah", "."}
+GARBAGE = {"", "you", "the", "a", "um", "uh", "hmm", "hm", "ah", ".", "mm", "oh"}
 
 def listen_clean() -> str | None:
-    """Listen and return text, or None if nothing useful was heard."""
     text = stt.listen()
     if not text:
         return None
     cleaned = text.strip().lower()
-    if cleaned in GARBAGE or len(cleaned) < 2:
+    if cleaned in GARBAGE or len(cleaned) < 3:
         return None
     return text.strip()
-
-
-# ── Check internet before making API calls ────────────────────────────────────
-
-def has_internet() -> bool:
-    try:
-        requests_mod = __import__("requests")
-        requests_mod.get("https://api.groq.com", timeout=4)
-        return True
-    except Exception:
-        return False
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
@@ -118,57 +156,69 @@ def has_internet() -> bool:
 def run():
     acquire_wake_lock()
 
-    print("\n╔══════════════════════════════╗")
-    print("║   Voice Agent — Phase 4      ║")
-    print("╠══════════════════════════════╣")
-    print(f"║  Model : {config.GROQ_MODEL[:22]:<22}║")
-    print(f"║  Wake  : \"{config.WAKE_PHRASE}\"        ║")
-    print(f"║  Sleep : \"{config.SLEEP_PHRASE}\"   ║")
-    print(f"║  Quit  : Ctrl+C              ║")
-    print("╚══════════════════════════════╝\n")
+    streak = update_streak()
 
-    conversation   = memory.load_recent_history()
-    facts_context  = memory.facts_as_context()
+    print("\n╔══════════════════════════════════════╗")
+    print("║         Buddy — Your Jarvis          ║")
+    print("╠══════════════════════════════════════╣")
+    print(f"║  Model  : {config.GROQ_MODEL[:28]:<28}║")
+    print(f"║  Wake   : \"{config.WAKE_PHRASE}\"              ║")
+    print(f"║  Sleep  : \"{config.SLEEP_PHRASE}\"        ║")
+    print(f"║  Streak : {streak} day{'s' if streak != 1 else ''}                         ║")
+    print("╚══════════════════════════════════════╝\n")
 
-    print(f"  Loaded {len(conversation)//2} past turns | {len(memory.get_all_facts())} facts known\n")
+    # Start background battery monitor
+    threading.Thread(target=_battery_monitor, daemon=True).start()
 
-    notify("Agent", f"Say '{config.WAKE_PHRASE}' to start")
+    conversation  = memory.load_recent_history()
+    facts_context = memory.facts_as_context()
+    print(f"  {len(conversation)//2} past turns | {len(memory.get_all_facts())} facts | streak: {streak} days\n")
 
-    sleeping = True   # start in idle/wake-word mode
+    notify("Buddy", f"Say '{config.WAKE_PHRASE}' to start | Streak: {streak} days")
+
+    sleeping           = True
     consecutive_errors = 0
+    last_emotion       = "neutral"
 
     while True:
         try:
-            # ── IDLE: listen only for wake word ───────────────────────────────
+            # ── Auto night silence ─────────────────────────────────────────────
+            if is_night_time() and not sleeping:
+                sleeping = True
+                tts.speak("It's late. Going quiet — say hey buddy if you really need me.")
+
+            # ── IDLE: wake word only ───────────────────────────────────────────
             if sleeping:
                 print_status("idle")
                 text = listen_clean()
                 if not text:
                     continue
-
                 print(f"\n[Heard] {text}")
-
                 if config.WAKE_PHRASE in text.lower():
                     sleeping = False
-                    wake_reply = "Hey, I'm here! What's up?"
+                    hour = datetime.datetime.now().hour
+                    if hour < 12:
+                        greeting = f"Good morning Praful! Day {streak} streak. What's up?"
+                    elif hour < 17:
+                        greeting = "Hey! I'm here. What do you need?"
+                    else:
+                        greeting = "Evening! What's going on?"
                     print_status("speaking")
-                    notify("Agent", "Listening...")
-                    tts.speak(wake_reply)
-                    memory.save_turn("assistant", wake_reply)
-                    conversation.append({"role": "assistant", "content": wake_reply})
+                    notify("Buddy", "Awake")
+                    tts.speak(greeting)
+                    memory.save_turn("assistant", greeting)
+                    conversation.append({"role": "assistant", "content": greeting})
                 continue
 
-            # ── AWAKE: full listen → think → speak loop ───────────────────────
+            # ── AWAKE ──────────────────────────────────────────────────────────
             print_status("listening")
-            notify("Agent", "Listening...")
-
+            notify("Buddy", "Listening...")
             text = listen_clean()
 
             if not text:
-                # Heard nothing useful — stay awake but prompt gently
                 consecutive_errors += 1
-                if consecutive_errors >= 3:
-                    tts.speak("I didn't catch that. I'm still here when you're ready.")
+                if consecutive_errors >= 4:
+                    tts.speak("Still here whenever you're ready.")
                     consecutive_errors = 0
                 continue
 
@@ -178,56 +228,53 @@ def run():
             # Sleep command
             if config.SLEEP_PHRASE in text.lower():
                 sleeping = True
-                farewell = f"Got it, going idle. Say '{config.WAKE_PHRASE}' when you need me."
-                print_status("speaking")
-                tts.speak(farewell)
-                memory.save_turn("assistant", farewell)
-                conversation.append({"role": "assistant", "content": farewell})
-                notify("Agent", f"Idle — say '{config.WAKE_PHRASE}'")
+                tts.speak(f"Going idle. Say '{config.WAKE_PHRASE}' when you need me.")
+                notify("Buddy", "Idle")
                 continue
 
-            # Save user turn + extract facts
+            # Emotion detection — adjust response if frustrated
+            emotion = detect_emotion(text)
+            if emotion == "frustrated" and last_emotion != "frustrated":
+                tts.speak("Hey, take a breath. I've got you.")
+                time.sleep(0.5)
+            last_emotion = emotion
+
+            # Save + extract facts
             memory.save_turn("user", text)
             conversation.append({"role": "user", "content": text})
             memory.maybe_extract_fact(text)
 
-            # Trim context window
             max_msgs = config.CONTEXT_WINDOW_TURNS * 2
             if len(conversation) > max_msgs:
                 conversation = conversation[-max_msgs:]
-
             facts_context = memory.facts_as_context()
 
-            # ── Think ─────────────────────────────────────────────────────────
+            # Think
             print_status("thinking")
-            notify("Agent", "Thinking...")
-
+            notify("Buddy", "Thinking...")
             reply = brain.chat(conversation, facts_context)
 
-            # ── Speak ─────────────────────────────────────────────────────────
-            print(f"\n[Agent] {reply}")
+            # Speak
+            print(f"\n[Buddy] {reply}")
             memory.save_turn("assistant", reply)
             conversation.append({"role": "assistant", "content": reply})
-
             print_status("speaking")
-            notify("Agent", reply[:60])
+            notify("Buddy", reply[:60])
             tts.speak(reply)
-            beep_done()
 
         except KeyboardInterrupt:
-            print("\n\nStopping agent...")
+            print("\n\nShutting down Buddy...")
             break
-
         except Exception as e:
             print(f"\n[Error] {e}", file=sys.stderr)
             consecutive_errors += 1
             if consecutive_errors < 4:
-                tts.speak("Oops, something went wrong. Let's try again.")
+                tts.speak("Had a hiccup. Let's keep going.")
             time.sleep(1)
 
     release_wake_lock()
-    notify("Agent", "Stopped")
-    print("Agent stopped. Bye!")
+    notify("Buddy", "Offline")
+    print("Buddy offline. Bye!")
 
 
 if __name__ == "__main__":
