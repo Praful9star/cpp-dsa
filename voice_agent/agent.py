@@ -87,7 +87,7 @@ def add_turn(role: str, content: str):
 def run():
     acquire_wake_lock()
     print("\n=== Voice Agent — Phase 1 ===")
-    print(f"  Model   : {config.CLAUDE_MODEL}")
+    print(f"  Model   : {config.GROQ_MODEL}")
     print(f"  TTS     : {config.TTS_BACKEND}")
     print(f"  Sleep   : say \"{config.SLEEP_PHRASE}\"")
     print(f"  Quit    : Ctrl+C\n")
