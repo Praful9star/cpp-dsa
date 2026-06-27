@@ -42,23 +42,8 @@ memory.seed_facts(PRAFUL_FACTS)
 # Short beep files stored in ~/sounds/. We generate them once using termux-tts
 # as a workaround — or just use a tiny subprocess bell.
 
-def beep_listen():
-    """Play a short rising tone to signal 'I'm listening now'."""
-    try:
-        # Use termux-tts-speak with a short neutral sound to act as a cue
-        subprocess.Popen(
-            ["termux-tts-speak", "-r", "2.5", "mm"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        time.sleep(0.4)  # brief pause so the cue plays before mic opens
-    except Exception:
-        pass
-
-
 def beep_done():
-    """Short cue to signal agent has finished speaking."""
-    # Terminal bell — silent on most setups but harmless
+    """Terminal bell after agent finishes speaking."""
     print("\a", end="", flush=True)
 
 
@@ -174,7 +159,6 @@ def run():
                 continue
 
             # ── AWAKE: full listen → think → speak loop ───────────────────────
-            beep_listen()
             print_status("listening")
             notify("Agent", "Listening...")
 

@@ -1,8 +1,5 @@
 """
-brain.py — Single-call approach: detect intent → run tool → one Groq call.
-
-No two-step tool-calling API. Just keyword detection + one clean API call.
-Much more reliable on mobile.
+brain.py — Intent detection + single Groq call.
 """
 
 import re
@@ -10,7 +7,7 @@ import requests
 import config
 from tools.web_search    import web_search
 from tools.telegram_send import send_telegram
-from tools.play_media    import play_youtube, stop_media
+from tools.play_media    import play_youtube, stop_media, skip_next, skip_prev, now_playing
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
@@ -20,43 +17,48 @@ No bullet points, no markdown — just normal sentences.
 Use his name occasionally but not every reply.{facts}"""
 
 
-# ── Intent detection via simple keyword matching ──────────────────────────────
+# ── Intent detection ──────────────────────────────────────────────────────────
 
 SEARCH_TRIGGERS = [
     "search", "look up", "google", "find out", "what is", "who is",
     "who won", "latest", "news about", "tell me about", "current",
     "score", "weather", "price", "how much", "when did", "where is",
+    "what's happening", "any updates", "results of",
 ]
 
-PLAY_TRIGGERS = ["play ", "put on ", "listen to ", "stream "]
-STOP_TRIGGERS = ["stop", "pause", "mute", "quiet", "silence the music", "stop the music", "stop playing"]
+PLAY_TRIGGERS  = ["play ", "put on ", "listen to ", "stream "]
+STOP_TRIGGERS  = ["stop music", "stop the music", "stop playing", "stop song",
+                   "pause music", "pause the music", "turn off music", "mute music"]
+NEXT_TRIGGERS  = ["next song", "next track", "skip", "next one", "play next"]
+PREV_TRIGGERS  = ["previous song", "previous track", "go back", "last song", "play previous"]
+NOW_TRIGGERS   = ["what's playing", "what song", "current song", "what are you playing"]
 TELEGRAM_TRIGGERS = ["tell ", "message ", "send ", "text "]
 
 
 def detect_intent(text: str):
-    """
-    Returns (intent, arg) where intent is one of:
-    'search', 'play', 'stop', 'telegram', or 'chat'
-    """
     t = text.lower().strip()
 
-    # Stop music
-    if any(t.startswith(w) or w in t for w in STOP_TRIGGERS):
-        if "music" in t or "playing" in t or "song" in t or "audio" in t or t in ("stop", "pause"):
-            return ("stop", "")
+    if any(kw in t for kw in STOP_TRIGGERS):
+        return ("stop", "")
 
-    # Play music/video
+    if any(kw in t for kw in NEXT_TRIGGERS):
+        return ("next", "")
+
+    if any(kw in t for kw in PREV_TRIGGERS):
+        return ("prev", "")
+
+    if any(kw in t for kw in NOW_TRIGGERS):
+        return ("nowplaying", "")
+
     for trigger in PLAY_TRIGGERS:
         if trigger in t:
             query = text[t.index(trigger) + len(trigger):].strip()
             if query:
                 return ("play", query)
 
-    # Telegram
     for trigger in TELEGRAM_TRIGGERS:
         if t.startswith(trigger):
             rest = text[len(trigger):].strip()
-            # "tell mom I'll be home" → recipient=mom, message=I'll be home
             match = re.match(r"(\w+)\s+(.+)", rest, re.IGNORECASE)
             if match:
                 recipient = match.group(1)
@@ -64,7 +66,6 @@ def detect_intent(text: str):
                 return ("telegram", {"recipient": recipient, "message": message})
             return ("telegram", {"recipient": "", "message": rest})
 
-    # Web search
     if any(kw in t for kw in SEARCH_TRIGGERS):
         return ("search", text)
 
@@ -74,43 +75,44 @@ def detect_intent(text: str):
 # ── Main chat function ────────────────────────────────────────────────────────
 
 def chat(conversation_history: list, facts_context: str = "") -> str:
-    """
-    Detect intent → optionally run a tool → single Groq call → return reply.
-    """
     user_text   = conversation_history[-1]["content"] if conversation_history else ""
     intent, arg = detect_intent(user_text)
 
     tool_result = ""
 
-    if intent == "search":
-        print(f"\n[Tool] web_search('{user_text}')")
-        tool_result = web_search(user_text)
+    if intent == "stop":
+        return stop_media()
+
+    elif intent == "next":
+        return skip_next()
+
+    elif intent == "prev":
+        return skip_prev()
+
+    elif intent == "nowplaying":
+        return now_playing()
 
     elif intent == "play":
         print(f"\n[Tool] play_youtube('{arg}')")
         tool_result = play_youtube(arg)
 
-    elif intent == "stop":
-        print("\n[Tool] stop_media()")
-        return stop_media()  # no need to call Groq for this
+    elif intent == "search":
+        print(f"\n[Tool] web_search('{user_text}')")
+        tool_result = web_search(user_text)
 
     elif intent == "telegram":
         print(f"\n[Tool] send_telegram({arg})")
         tool_result = send_telegram(arg.get("message", ""), arg.get("recipient", ""))
 
-    # Build messages for Groq
-    system = SYSTEM_PROMPT.format(facts=facts_context)
+    # Build messages
+    system   = SYSTEM_PROMPT.format(facts=facts_context)
     messages = [{"role": "system", "content": system}]
-
-    # Inject tool result as extra context before the last user message
-    history = conversation_history[:-1]  # everything except the last user message
-    messages += history
+    messages += conversation_history[:-1]  # history minus last user msg
 
     if tool_result:
-        # Give Groq the raw data and ask it to reply naturally
         combined = (
             f"{user_text}\n\n"
-            f"[Tool result — use this to answer, but speak naturally, not like a report]:\n"
+            f"[Info for your reply — speak naturally, not like a report]:\n"
             f"{tool_result[:1200]}"
         )
         messages.append({"role": "user", "content": combined})
