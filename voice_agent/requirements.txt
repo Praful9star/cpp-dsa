@@ -1,6 +1,9 @@
-# Core — all pure Python, no Rust/compilation needed
+# All pure Python — no Rust/compilation needed on Android
 requests>=2.31.0
 python-dotenv>=1.0.0
 
-# yt-dlp: install via pkg, NOT pip (avoids Rust build issues on Android)
-# Run this in Termux:  pkg install yt-dlp
+# yt-dlp: install via Termux package manager (NOT pip)
+#   pkg install yt-dlp
+
+# Optional: ElevenLabs richer voice (only if TTS_BACKEND=elevenlabs)
+#   pip install elevenlabs
