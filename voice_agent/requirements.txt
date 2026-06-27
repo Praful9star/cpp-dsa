@@ -1,13 +1,6 @@
-# Core
+# Core — all pure Python, no Rust/compilation needed
 requests>=2.31.0
 python-dotenv>=1.0.0
 
-# Phase 3 tools
-duckduckgo-search>=6.0.0   # free web search, no API key needed
-yt-dlp>=2024.1.0            # YouTube audio/video streaming
-
-# Optional: ElevenLabs TTS (only if TTS_BACKEND=elevenlabs)
-# elevenlabs>=1.0.0
-
-# Phase 3 optional: Telegram (only needed if you set TELEGRAM_BOT_TOKEN)
-# python-telegram-bot>=21.0  # not needed — we use raw requests for Telegram
+# yt-dlp: install via pkg, NOT pip (avoids Rust build issues on Android)
+# Run this in Termux:  pkg install yt-dlp
