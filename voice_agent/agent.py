@@ -232,6 +232,18 @@ def run():
                 notify("Buddy", "Idle")
                 continue
 
+            # Good night → respond warmly then go idle
+            if any(k in text.lower() for k in ["good night", "goodnight", "going to sleep",
+                                                 "going to bed", "sleep mode"]):
+                reply = brain.chat(conversation, facts_context)
+                print(f"\n[Buddy] {reply}")
+                memory.save_turn("assistant", reply)
+                conversation.append({"role": "assistant", "content": reply})
+                tts.speak(reply)
+                sleeping = True
+                notify("Buddy", "Sleep mode — say 'hey buddy' to wake me")
+                continue
+
             # Emotion detection — adjust response if frustrated
             emotion = detect_emotion(text)
             if emotion == "frustrated" and last_emotion != "frustrated":
