@@ -1,94 +1,89 @@
 """
-tools/play_media.py — Play YouTube audio or video via yt-dlp + termux-media-player.
+tools/play_media.py — Play YouTube audio via yt-dlp (installed via pkg) +
+                      termux-media-player.
 
-No API key needed. Works with search queries or direct YouTube URLs.
-
-Install: pip install yt-dlp
-         (yt-dlp is already a Python package — no separate binary needed)
+Install once in Termux:  pkg install yt-dlp
 
 Trigger examples:
   "play Believer by Imagine Dragons"
   "play some lo-fi music"
-  "play https://youtube.com/watch?v=..."
+  "stop the music"
 """
 
 import subprocess
 import sys
 import threading
-import yt_dlp
+import json
 
-# Track the currently playing process so we can stop it
-_current_process: subprocess.Popen | None = None
-_current_thread: threading.Thread | None = None
+_current_player: subprocess.Popen | None = None
 
 
 def play_youtube(query: str) -> str:
-    """
-    Search YouTube for `query` (or use it as a direct URL),
-    extract the audio stream URL, and play it via termux-media-player.
-    Returns a status string for the LLM.
-    """
-    global _current_process, _current_thread
+    """Search YouTube for query, get stream URL, play via termux-media-player."""
+    global _current_player
 
-    # Stop any currently playing audio first
-    stop_media()
+    stop_media()  # stop anything already playing
 
-    # If it looks like a URL, use it directly; otherwise search YouTube
+    # If it's a URL use directly, otherwise search YouTube
     if query.startswith("http://") or query.startswith("https://"):
-        search_query = query
+        search_arg = query
     else:
-        search_query = f"ytsearch1:{query}"
-
-    ydl_opts = {
-        "format": "bestaudio/best",
-        "quiet": True,
-        "no_warnings": True,
-        "extract_flat": False,
-    }
+        search_arg = f"ytsearch1:{query}"
 
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(search_query, download=False)
+        # Use yt-dlp binary (installed via pkg install yt-dlp)
+        result = subprocess.run(
+            [
+                "yt-dlp",
+                "--dump-json",
+                "--no-playlist",
+                "-f", "bestaudio/best",
+                search_arg,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
 
-            # If it was a search, grab the first result
-            if "entries" in info:
-                info = info["entries"][0]
+        if result.returncode != 0:
+            return f"Couldn't find '{query}' on YouTube."
 
-            stream_url = info.get("url")
-            title      = info.get("title", "Unknown")
+        info = json.loads(result.stdout.strip().splitlines()[0])
+        title      = info.get("title", "Unknown")
+        stream_url = info.get("url") or info.get("webpage_url")
 
-            if not stream_url:
-                return "Couldn't find a playable stream for that."
+        if not stream_url:
+            return "Found the video but couldn't get a playable link."
 
-        # Play in background thread so the agent can keep listening
+        # Play in background so agent keeps listening
         def _play():
-            global _current_process
+            global _current_player
             try:
-                _current_process = subprocess.Popen(
+                _current_player = subprocess.Popen(
                     ["termux-media-player", "play", stream_url],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
-                _current_process.wait()
+                _current_player.wait()
             except FileNotFoundError:
-                print("[Media] termux-media-player not found. Install termux-api.", file=sys.stderr)
+                print("[Media] termux-media-player not found.", file=sys.stderr)
             except Exception as e:
                 print(f"[Media] Playback error: {e}", file=sys.stderr)
 
-        _current_thread = threading.Thread(target=_play, daemon=True)
-        _current_thread.start()
-
+        threading.Thread(target=_play, daemon=True).start()
         return f"Playing: {title}"
 
-    except yt_dlp.utils.DownloadError as e:
-        return f"Couldn't find '{query}' on YouTube: {e}"
+    except FileNotFoundError:
+        return "yt-dlp is not installed. Run: pkg install yt-dlp"
+    except subprocess.TimeoutExpired:
+        return "Took too long to fetch that. Try again?"
     except Exception as e:
-        return f"Media playback failed: {e}"
+        return f"Media error: {e}"
 
 
 def stop_media() -> str:
-    """Stop whatever is currently playing."""
-    global _current_process
+    """Stop currently playing audio."""
+    global _current_player
     try:
         subprocess.run(
             ["termux-media-player", "stop"],
@@ -98,10 +93,10 @@ def stop_media() -> str:
         )
     except Exception:
         pass
-    if _current_process:
+    if _current_player:
         try:
-            _current_process.terminate()
+            _current_player.terminate()
         except Exception:
             pass
-        _current_process = None
+        _current_player = None
     return "Stopped."
