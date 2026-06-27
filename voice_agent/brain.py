@@ -36,6 +36,13 @@ from tools.vault        import add_to_vault, open_vault, vault_status, clear_vau
 from tools.shadow       import shadow_report, topic_map, activity_streak, word_cloud
 from tools.wingman      import craft_reply, comeback, icebreaker
 from tools.battle       import battle_report, personal_best, streak_battle
+from tools.alter_ego    import set_ego, get_ego_prompt, ego_status
+from tools.time_capsule import seal_capsule, list_capsules
+from tools.oracle       import start_oracle, oracle_answer, is_active as oracle_active
+from tools.emotion_timeline import emotional_report, best_days, worst_days, time_travel as emotion_time_travel
+from tools.life_os      import life_os_report, quick_status as life_os_status
+from tools.chaos_daemon import start_chaos, stop_chaos, chaos_status, fire_random as chaos_fire
+from tools.ghost_writer import ghost_write
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
@@ -410,6 +417,70 @@ def detect_and_run(text: str):
     if "winning streak" in t or "streak battle" in t:
         return streak_battle(), True, None
 
+    # ── Alter Ego Mode ────────────────────────────────────────────────────────
+    if any(k in t for k in ["villain mode", "monk mode", "drill mode", "drill sergeant",
+                              "chaos agent", "alter ego", "switch personality",
+                              "dark mode personality", "be a villain", "be the monk",
+                              "switch to villain", "switch to monk", "switch to drill",
+                              "switch to chaos", "switch back", "back to normal buddy"]):
+        return set_ego(t), True, None
+    if any(k in t for k in ["what mode are you in", "current personality", "which ego", "ego status"]):
+        return ego_status(), True, None
+
+    # ── Time Capsule ──────────────────────────────────────────────────────────
+    if any(k in t for k in ["time capsule", "message to future", "future me", "letter to myself"]):
+        if any(k in t for k in ["list", "show", "what capsules", "my capsules"]):
+            return list_capsules(), True, None
+        return seal_capsule(text), True, None
+
+    # ── The Oracle ────────────────────────────────────────────────────────────
+    if any(k in t for k in ["consult the oracle", "oracle mode", "oracle", "predict my future",
+                              "what's my future", "tell my fortune", "fortune teller"]):
+        return start_oracle(), False, None
+    # Oracle session: any answer while oracle is active
+    if oracle_active():
+        return oracle_answer(text), False, None
+
+    # ── Emotional Timeline ────────────────────────────────────────────────────
+    if any(k in t for k in ["emotional report", "how was i feeling", "my emotions", "emotion report",
+                              "my emotional journey", "mood history", "emotional history"]):
+        if any(k in t for k in ["last week", "yesterday", "last month", "on 20", "on 2025"]):
+            return emotion_time_travel(text), False, None
+        days = 30 if "month" in t else 7
+        return emotional_report(days), False, None
+    if any(k in t for k in ["when was i happiest", "best emotional day", "happiest day"]):
+        return best_days(), True, None
+    if any(k in t for k in ["when was i most stressed", "worst day", "hardest day", "toughest day"]):
+        return worst_days(), True, None
+    if "how was i feeling" in t:
+        return emotion_time_travel(text), False, None
+
+    # ── Life OS ───────────────────────────────────────────────────────────────
+    if any(k in t for k in ["life os", "run diagnostics", "system status", "life diagnostics",
+                              "os report", "life system report", "what processes", "check my ram",
+                              "system health"]):
+        if any(k in t for k in ["quick", "status", "brief"]):
+            return life_os_status(), True, None
+        return life_os_report(), False, None
+
+    # ── Chaos Daemon ──────────────────────────────────────────────────────────
+    if any(k in t for k in ["start chaos", "enable chaos", "chaos on", "unleash chaos",
+                              "activate chaos daemon"]):
+        return start_chaos(), True, None
+    if any(k in t for k in ["stop chaos", "disable chaos", "chaos off", "calm chaos"]):
+        return stop_chaos(), True, None
+    if "chaos status" in t:
+        return chaos_status(), True, None
+    if any(k in t for k in ["random chaos", "hit me with something random", "surprise me",
+                              "chaos event", "random interrupt"]):
+        return chaos_fire(), False, None
+
+    # ── Ghost Writer ──────────────────────────────────────────────────────────
+    if any(k in t for k in ["ghost write", "ghostwrite", "turn this into", "write me a",
+                              "write a blog", "write a linkedin", "tweet thread about",
+                              "draft an email", "cover letter", "cold dm", "write an essay"]):
+        return ghost_write(text), False, None
+
     # ── Web search ────────────────────────────────────────────────────────────
     SEARCH_KW = ["search", "look up", "google", "find out", "who is", "who won",
                   "latest", "news about", "tell me about", "score", "price of",
@@ -467,7 +538,8 @@ def chat(conversation_history: list, facts_context: str = "") -> str:
         return result
 
     mode_prompt   = get_mode_prompt()
-    system        = BASE_SYSTEM.format(mode=mode_prompt, facts=facts_context)
+    ego_prompt    = get_ego_prompt()
+    system        = BASE_SYSTEM.format(mode=mode_prompt + ego_prompt, facts=facts_context)
     messages      = [{"role": "system", "content": system}]
     messages     += conversation_history[:-1]
 
