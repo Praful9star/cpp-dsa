@@ -1,12 +1,11 @@
 """
 brain.py — Calls Groq API directly via requests (no Rust/pydantic needed).
-Works on Android/Termux without build issues.
 """
 
 import requests
 import config
 
-SYSTEM_PROMPT = """You are a close friend of the user — smart, curious, warm, and a bit witty.
+BASE_SYSTEM_PROMPT = """You are a close friend of Praful — smart, curious, warm, and a bit witty.
 You talk like a real person, not a customer-service bot. Keep replies natural and concise
 (spoken out loud, so don't write essays). Have opinions. Joke around when it fits.
 Be genuinely helpful without being sycophantic.
@@ -14,20 +13,23 @@ Be genuinely helpful without being sycophantic.
 The user is talking to you through a voice interface on their Android tablet, so:
 - Keep responses short enough to be comfortable to listen to.
 - Avoid bullet points, markdown, or numbered lists — speak in natural sentences.
-- If you don't know something, say so honestly."""
+- If you don't know something, say so honestly.
+- Use his name "Praful" occasionally to keep it personal, but not every single reply.{facts}"""
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 
-def chat(conversation_history: list) -> str:
+def chat(conversation_history: list, facts_context: str = "") -> str:
     """Send conversation history to Groq and return the reply text."""
+    system = BASE_SYSTEM_PROMPT.format(facts=facts_context)
+
     headers = {
         "Authorization": f"Bearer {config.GROQ_API_KEY}",
         "Content-Type": "application/json",
     }
     payload = {
         "model": config.GROQ_MODEL,
-        "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + conversation_history,
+        "messages": [{"role": "system", "content": system}] + conversation_history,
         "max_tokens": 512,
         "temperature": 0.8,
     }
@@ -41,7 +43,7 @@ def chat(conversation_history: list) -> str:
         return "I can't reach the internet right now. Check your connection?"
     except requests.exceptions.Timeout:
         return "That took too long. Try again?"
-    except requests.exceptions.HTTPError as e:
+    except requests.exceptions.HTTPError:
         if response.status_code == 401:
             return "My API key seems wrong — check GROQ_API_KEY in your .env file."
         if response.status_code == 429:
