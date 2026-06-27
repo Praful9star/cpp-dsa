@@ -1,66 +1,84 @@
 """
-tools/play_media.py — Play YouTube audio via yt-dlp (installed via pkg) +
-                      termux-media-player.
+tools/play_media.py — Play YouTube audio by downloading to a temp file first,
+then playing via termux-media-player.
 
-Install once in Termux:  pkg install yt-dlp
-
-Trigger examples:
-  "play Believer by Imagine Dragons"
-  "play some lo-fi music"
-  "stop the music"
+yt-dlp is installed as python-yt-dlp via pkg — call it as a Python module.
 """
 
 import subprocess
 import sys
 import threading
-import json
+import os
+
+AUDIO_FILE = "/data/data/com.termux/files/home/audio_temp.mp3"
 
 _current_player: subprocess.Popen | None = None
 
 
 def play_youtube(query: str) -> str:
-    """Search YouTube for query, get stream URL, play via termux-media-player."""
     global _current_player
 
     stop_media()  # stop anything already playing
 
-    # If it's a URL use directly, otherwise search YouTube
     if query.startswith("http://") or query.startswith("https://"):
         search_arg = query
     else:
         search_arg = f"ytsearch1:{query}"
 
+    # Remove old temp file
     try:
-        # Use yt-dlp binary (installed via pkg install yt-dlp)
+        if os.path.exists(AUDIO_FILE):
+            os.remove(AUDIO_FILE)
+    except Exception:
+        pass
+
+    try:
+        # Download audio to temp file using yt-dlp as a Python module
         result = subprocess.run(
             [
-                "yt-dlp",
-                "--dump-json",
+                "python", "-m", "yt_dlp",
                 "--no-playlist",
-                "-f", "bestaudio/best",
+                "-x",                          # extract audio only
+                "--audio-format", "mp3",
+                "--audio-quality", "5",        # medium quality, faster download
+                "-o", AUDIO_FILE,
+                "--no-part",
+                "--quiet",
+                "--no-warnings",
                 search_arg,
             ],
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=60,
         )
 
-        if result.returncode != 0:
-            return f"Couldn't find '{query}' on YouTube."
+        # yt-dlp may rename file — find what was actually saved
+        audio_path = AUDIO_FILE
+        if not os.path.exists(audio_path):
+            # Try without extension
+            base = AUDIO_FILE.replace(".mp3", "")
+            for ext in [".mp3", ".m4a", ".opus", ".webm", ".ogg"]:
+                if os.path.exists(base + ext):
+                    audio_path = base + ext
+                    break
 
-        info = json.loads(result.stdout.strip().splitlines()[0])
-        title      = info.get("title", "Unknown")
-        stream_url = info.get("url") or info.get("webpage_url")
+        if not os.path.exists(audio_path):
+            return f"Couldn't download '{query}'. Try again?"
 
-        if not stream_url:
-            return "Found the video but couldn't get a playable link."
+        # Get song title from yt-dlp output
+        title = query  # fallback
+        if result.stdout:
+            for line in result.stdout.splitlines():
+                if "Destination" in line or ".mp3" in line:
+                    title = line.split("/")[-1].replace(".mp3", "").strip()
+                    break
 
-        # Play in background so agent keeps listening
+        # Play the downloaded file in background
         def _play():
             global _current_player
             try:
                 _current_player = subprocess.Popen(
-                    ["termux-media-player", "play", stream_url],
+                    ["termux-media-player", "play", audio_path],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
@@ -71,18 +89,15 @@ def play_youtube(query: str) -> str:
                 print(f"[Media] Playback error: {e}", file=sys.stderr)
 
         threading.Thread(target=_play, daemon=True).start()
-        return f"Playing: {title}"
+        return f"Playing: {query}"
 
-    except FileNotFoundError:
-        return "yt-dlp is not installed. Run: pkg install yt-dlp"
     except subprocess.TimeoutExpired:
-        return "Took too long to fetch that. Try again?"
+        return "Download timed out. Check your internet and try again."
     except Exception as e:
         return f"Media error: {e}"
 
 
 def stop_media() -> str:
-    """Stop currently playing audio."""
     global _current_player
     try:
         subprocess.run(
