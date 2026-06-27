@@ -15,6 +15,8 @@ import tts
 import brain
 import memory
 from tools.procrastination import detect as _is_procrastinating, call_out as _procrastination_callout
+from tools.emotion_timeline import update_today as _track_emotion
+from tools.time_capsule import start_capsule_monitor
 
 config.validate_phase1()
 memory.init_db()
@@ -171,6 +173,9 @@ def run():
     # Start background battery monitor
     threading.Thread(target=_battery_monitor, daemon=True).start()
 
+    # Start time capsule monitor (checks hourly for due capsules)
+    start_capsule_monitor()
+
     conversation  = memory.load_recent_history()
     facts_context = memory.facts_as_context()
     print(f"  {len(conversation)//2} past turns | {len(memory.get_all_facts())} facts | streak: {streak} days\n")
@@ -261,10 +266,11 @@ def run():
                 time.sleep(0.5)
             last_emotion = emotion
 
-            # Save + extract facts
+            # Save + extract facts + track emotion passively
             memory.save_turn("user", text)
             conversation.append({"role": "user", "content": text})
             memory.maybe_extract_fact(text)
+            _track_emotion(text)
 
             max_msgs = config.CONTEXT_WINDOW_TURNS * 2
             if len(conversation) > max_msgs:
