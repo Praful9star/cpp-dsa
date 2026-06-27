@@ -22,6 +22,13 @@ from tools.dsa         import problem_of_the_day, random_problem, start_quiz, ne
 from tools.expenses    import add_expense, get_expenses, delete_expenses
 from tools.fun         import roast_me, tell_story, rap_battle, start_debate, get_quote, internet_speed, days_until
 from tools.modes       import set_mode, get_mode_prompt, current_mode_status
+from tools.vision      import look_and_describe
+from tools.youtube_summary import summarize_youtube
+from tools.journal     import add_journal_entry, read_journal, brain_dump, journal_stats, clear_journal
+from tools.pomodoro    import start_pomodoro, stop_pomodoro, pomodoro_status
+from tools.finance     import get_crypto_price, get_stock_price, market_summary
+from tools.fake_call   import schedule_fake_call, cancel_fake_call
+from tools.spaced_repetition import mark_struggle, mark_understood, get_due_reviews, list_all_cards
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
@@ -233,6 +240,100 @@ def detect_and_run(text: str):
     if any(k in t for k in ["summarize our conversation", "what did we talk about", "recap"]):
         return None, False, "SUMMARIZE"
 
+    # ── Camera / Vision ───────────────────────────────────────────────────────
+    if any(k in t for k in ["what do you see", "look at this", "what's in front",
+                              "describe what you see", "read this text", "read the",
+                              "what food is", "who is this", "what is this",
+                              "point the camera", "use the camera", "take a photo"]):
+        return look_and_describe(text), False, None
+
+    # ── YouTube Summarizer ────────────────────────────────────────────────────
+    if any(k in t for k in ["summarize this video", "summarize youtube", "what is this video",
+                              "video summary", "youtube.com", "youtu.be"]):
+        return summarize_youtube(text), False, None
+
+    # ── Journal ───────────────────────────────────────────────────────────────
+    for kw in ["journal entry", "add to journal", "journal:", "diary entry"]:
+        if kw in t:
+            content = text[t.index(kw) + len(kw):].strip(" :")
+            return add_journal_entry(content or text), True, None
+    if any(k in t for k in ["brain dump", "dump my thoughts", "everything on my mind"]):
+        return None, False, "BRAIN_DUMP"
+    if any(k in t for k in ["read my journal", "show my journal", "my journal entries"]):
+        return read_journal(), False, None
+    if any(k in t for k in ["journal stats", "how many journal", "journal count"]):
+        return journal_stats(), True, None
+    if "clear journal" in t or "delete journal" in t:
+        return clear_journal(), True, None
+
+    # ── Pomodoro ──────────────────────────────────────────────────────────────
+    if any(k in t for k in ["start pomodoro", "pomodoro", "focus timer", "start focus"]):
+        if any(k in t for k in ["stop", "cancel", "end"]):
+            return stop_pomodoro(), True, None
+        if any(k in t for k in ["status", "how long", "time left"]):
+            return pomodoro_status(), True, None
+        return start_pomodoro(text), True, None
+    if any(k in t for k in ["stop pomodoro", "cancel pomodoro", "end pomodoro"]):
+        return stop_pomodoro(), True, None
+    if any(k in t for k in ["pomodoro status", "pomodoro count", "how many pomodoros"]):
+        return pomodoro_status(), True, None
+
+    # ── Finance: Crypto ───────────────────────────────────────────────────────
+    CRYPTO_KW = ["bitcoin", "ethereum", "crypto", "btc", "eth", "dogecoin", "doge",
+                  "solana", "sol", "cardano", "ripple", "matic", "polygon", "shiba",
+                  "binance", "bnb", "litecoin", "polkadot", "chainlink", "avax",
+                  "tron", "pepe", "coin price"]
+    if any(k in t for k in CRYPTO_KW):
+        return get_crypto_price(text), False, None
+
+    # ── Finance: Stocks ───────────────────────────────────────────────────────
+    STOCK_KW = ["stock", "share price", "market", "sensex", "nifty", "nasdaq",
+                 "apple stock", "tesla", "reliance", "tcs stock", "infosys stock"]
+    if any(k in t for k in STOCK_KW):
+        if "market summary" in t or "market snapshot" in t:
+            return market_summary(), False, None
+        return get_stock_price(text), False, None
+
+    # ── Fake / Escape Call ────────────────────────────────────────────────────
+    if any(k in t for k in ["fake call", "escape call", "rescue call", "call me in",
+                              "pretend call", "fake incoming"]):
+        if any(k in t for k in ["cancel", "stop"]):
+            return cancel_fake_call(), True, None
+        return schedule_fake_call(text), True, None
+
+    # ── Spaced Repetition / DSA Review ───────────────────────────────────────
+    if any(k in t for k in ["i'm struggling with", "struggling with", "don't understand",
+                              "i don't get", "confused about", "weak at", "bad at"]):
+        concept = re.sub(r"i'?m? ?(struggling with|don'?t (understand|get)|confused about|weak at|bad at)\s*", "", t).strip()
+        if concept:
+            return mark_struggle(concept), True, None
+    if any(k in t for k in ["i got it", "i understand now", "mark understood",
+                              "understood", "i know this now"]):
+        concept = re.sub(r"(i got it|i understand now|mark understood|understood|i know this now)[,\s]*", "", t).strip()
+        if concept:
+            return mark_understood(concept), True, None
+        return "Which concept did you understand? Say 'I got it — recursion' for example.", True, None
+    if any(k in t for k in ["what should i review", "review cards", "due reviews",
+                              "what to review", "my weak spots"]):
+        return get_due_reviews(), False, None
+    if any(k in t for k in ["list review cards", "all review cards", "my flashcards"]):
+        return list_all_cards(), False, None
+
+    # ── Personality Mirror / Mood Analysis ───────────────────────────────────
+    if any(k in t for k in ["how am i doing", "my mood", "personality mirror",
+                              "mood report", "how's my mental", "how have i been"]):
+        return None, False, "MOOD_MIRROR"
+
+    # ── Fact Check ────────────────────────────────────────────────────────────
+    if any(k in t for k in ["fact check", "is that true", "is it true", "verify that",
+                              "that's not true", "are you sure about"]):
+        return None, False, "FACT_CHECK"
+
+    # ── Sleep Mode ────────────────────────────────────────────────────────────
+    if any(k in t for k in ["good night", "goodnight", "i'm going to sleep",
+                              "im going to sleep", "going to bed", "sleep mode"]):
+        return None, False, "GOOD_NIGHT"
+
     # ── Web search ────────────────────────────────────────────────────────────
     SEARCH_KW = ["search", "look up", "google", "find out", "who is", "who won",
                   "latest", "news about", "tell me about", "score", "price of",
@@ -295,10 +396,50 @@ def chat(conversation_history: list, facts_context: str = "") -> str:
     messages     += conversation_history[:-1]
 
     if special_prompt == "SUMMARIZE":
-        # Summarize from the conversation history itself
         history_text = "\n".join(f"{m['role']}: {m['content']}" for m in conversation_history[-20:])
         messages.append({"role": "user", "content":
             f"Summarize what we talked about in this session in 3-4 natural sentences:\n{history_text}"})
+
+    elif special_prompt == "BRAIN_DUMP":
+        # Brain dump: use the last user message as the raw dump
+        result = brain_dump(user_text)
+        return result
+
+    elif special_prompt == "MOOD_MIRROR":
+        history_text = "\n".join(
+            f"{m['role']}: {m['content']}" for m in conversation_history[-50:]
+            if m["role"] == "user"
+        )
+        messages.append({"role": "user", "content":
+            f"Analyze Praful's recent messages and give a candid mood/personality report. "
+            f"Look for stress signals, energy levels, focus patterns, emotional tone. "
+            f"Be honest but kind — like a friend who notices things. 4-5 natural sentences.\n\n"
+            f"Recent messages:\n{history_text[:3000]}"})
+
+    elif special_prompt == "FACT_CHECK":
+        # Find the last assistant claim to fact-check
+        last_claim = ""
+        for m in reversed(conversation_history[:-1]):
+            if m["role"] == "assistant":
+                last_claim = m["content"]
+                break
+        search_result = ""
+        try:
+            from tools.web_search import web_search
+            search_result = web_search(last_claim[:100])
+        except Exception:
+            pass
+        messages.append({"role": "user", "content":
+            f"Praful wants to fact-check this statement: '{last_claim}'. "
+            f"Web search results: {search_result[:800]}. "
+            f"Tell him if it's accurate, partially true, or wrong — and why. Be direct and specific."})
+
+    elif special_prompt == "GOOD_NIGHT":
+        hour = __import__("datetime").datetime.now().hour
+        messages.append({"role": "user", "content":
+            f"Praful is going to sleep (it's {hour}:00). Say good night warmly, give him one "
+            f"motivating thought for tomorrow, and remind him of his streak. Keep it under 3 sentences."})
+
     elif special_prompt:
         messages.append({"role": "user", "content": special_prompt})
     elif result:
