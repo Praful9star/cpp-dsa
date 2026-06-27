@@ -1,0 +1,17 @@
+# Secrets — never commit these
+voice_agent/.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# SQLite database (contains personal memory — keep local)
+voice_agent/memory.db
+
+# OS junk
+.DS_Store
+Thumbs.db

@@ -1,0 +1,13 @@
+# Core
+anthropic>=0.30.0
+python-dotenv>=1.0.0
+
+# ElevenLabs TTS (optional — only needed if TTS_BACKEND=elevenlabs)
+# elevenlabs>=1.0.0
+
+# Phase 2 additions (uncomment when ready)
+# (sqlite3 is in the Python standard library — no extra package needed)
+
+# Phase 3 additions (uncomment when ready)
+# python-telegram-bot>=21.0
+# yt-dlp>=2024.1.0
